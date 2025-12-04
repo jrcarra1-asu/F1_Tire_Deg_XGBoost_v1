@@ -10,7 +10,7 @@ Original file is located at
 # Commented out IPython magic to ensure Python compatibility.
 # %pip install xgboost
 # %pip install mlflow
-dbutils.library.restartPython()
+
 
 import os
 import pandas as pd
