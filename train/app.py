@@ -14,7 +14,7 @@ numerical_features = ['Throttle', 'Brake', 'Speed', 'Surface_Roughness',
                       'Ambient_Temperature', 'Lateral_G_Force', 'Longitudinal_G_Force',
                       'Tire_Friction_Coefficient', 'Tire_Tread_Depth',
                       'force_on_tire', 'front_surface_temp', 'rear_surface_temp',
-                      'front_inner_temp', 'rear_inner_temp']
+                      'front_inner_temp', 'rear_inner_temp', 'lap_count']  # New
 categorical_features = ['Tire_Compound', 'Driving_Style', 'Track']
 
 # Streamlit app title and description
