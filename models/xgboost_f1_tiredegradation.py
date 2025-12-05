@@ -8,7 +8,7 @@ Original file is located at
 """
 
 # Commented out IPython magic to ensure Python compatibility.
-# %pip install xgboost
+%pip install xgboost
 # %pip install mlflow
 
 
@@ -26,15 +26,15 @@ from mlflow.models.signature import infer_signature
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-# Databricks - MLflow is auto-configured, no credentials needed
-# (Colab version used userdata for DATABRICKS_HOST/TOKEN)
+# Set MLflow registry URI to Unity Catalog
+mlflow.set_registry_uri("databricks-uc")
 
 # End runs
 while mlflow.active_run():
     mlflow.end_run(status='FINISHED')
 mlflow.end_run()
 
-mlflow.set_experiment("/Users/leo.lwakabamba@gmail.com/F1_Tire_Deg_DemoII")
+mlflow.set_experiment("/Users/jrcarra1@asu.edu/F1_Tire_Deg_DemoII")
 
 # Unity Catalog Volume path (replaces Google Drive path)
 CATALOG = "workspace"
