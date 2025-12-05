@@ -53,7 +53,7 @@ numerical_features = ['Throttle', 'Brake', 'Speed', 'Surface_Roughness',
                       'Ambient_Temperature', 'Lateral_G_Force', 'Longitudinal_G_Force',
                       'Tire_Friction_Coefficient', 'Tire_Tread_Depth',
                       'force_on_tire', 'front_surface_temp', 'rear_surface_temp',
-                      'front_inner_temp', 'rear_inner_temp']
+                      'front_inner_temp', 'rear_inner_temp', 'lap_count']
 categorical_features = ['Tire_Compound', 'Driving_Style', 'Track']
 target_reg = 'cumilative_Tire_Wear'  # Fix typo
 target_class = 'degradation_risk'
