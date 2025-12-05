@@ -8,10 +8,9 @@ import pandas as pd
 import numpy as np
 import joblib
 
-# Load models (assume in repo; adjust paths if in models/)
 @st.cache_resource
 def load_models():
-    model = joblib.load('xgb_model.pkl')  # Or 'models/xgb_model.pkl'
+    model = joblib.load('xgb_model.pkl')
     scaler = joblib.load('scaler.pkl')
     encoder = joblib.load('encoder.pkl')
     le = joblib.load('label_encoder.pkl')
@@ -21,11 +20,11 @@ numerical_features = ['Throttle', 'Brake', 'Speed', 'Surface_Roughness',
                       'Ambient_Temperature', 'Lateral_G_Force', 'Longitudinal_G_Force',
                       'Tire_Friction_Coefficient', 'Tire_Tread_Depth',
                       'force_on_tire', 'front_surface_temp', 'rear_surface_temp',
-                      'front_inner_temp', 'rear_inner_temp']
+                      'front_inner_temp', 'rear_inner_temp', 'lap_count']  # Add for validity
+
 categorical_features = ['Tire_Compound', 'Driving_Style', 'Track']
 
-# F1-realistic options (adjust from your data uniques)
-tire_compounds = ['C1', 'C2', 'C3', 'C4', 'C5']
+tire_compounds = ['C1', 'C2', 'C3', 'C4', 'C5']  # Match training
 driving_styles = ['Aggressive', 'Balanced', 'Conservative']
 tracks = ['Monza', 'Monaco', 'Red Bull Ring', 'Silverstone', 'Spa-Francorchamps']
 
@@ -52,36 +51,41 @@ with col2:
     front_inner_temp = st.number_input("Front Inner Temp (°C)", min_value=0.0, value=90.0)
     rear_inner_temp = st.number_input("Rear Inner Temp (°C)", min_value=0.0, value=90.0)
 
+lap_count = st.number_input("Lap Count", min_value=1, max_value=70, value=10)  # Fix validity
 tire_compound = st.selectbox("Tire Compound", tire_compounds)
 driving_style = st.selectbox("Driving Style", driving_styles)
 track = st.selectbox("Track", tracks)
 
+if tread_depth < 1.6:
+    st.error("Illegal tread per FIA—min 1.6mm.")
+
 if st.button("Predict Risk"):
     try:
         model, scaler, encoder, le = load_models()
-        
-        input_data = {
-            **dict(zip(numerical_features, [throttle, brake, speed, surface_roughness, ambient_temp, lateral_g, longitudinal_g, friction_coeff, tread_depth, force_on_tire, front_surface_temp, rear_surface_temp, front_inner_temp, rear_inner_temp])),
-            'Tire_Compound': tire_compound,
-            'Driving_Style': driving_style,
-            'Track': track
-        }
+
+        num_vals = [throttle, brake, speed, surface_roughness, ambient_temp, lateral_g, longitudinal_g, friction_coeff, tread_depth, force_on_tire, front_surface_temp, rear_surface_temp, front_inner_temp, rear_inner_temp, lap_count]
+        input_data = dict(zip(numerical_features, num_vals))
+        input_data.update({'Tire_Compound': tire_compound, 'Driving_Style': driving_style, 'Track': track})
         input_df = pd.DataFrame([input_data])
-        
+
         X_num = input_df[numerical_features]
         X_cat = input_df[categorical_features]
-        X_cat_encoded = encoder.transform(X_cat)
-        X = np.hstack((X_num.values, X_cat_encoded))  # Use .values for array
+        try:
+            X_cat_encoded = encoder.transform(X_cat)
+        except ValueError as e:
+            st.error(f"Category error: {e}. Trained categories: {encoder.categories_}")
+            st.stop()
+        X = np.hstack((X_num.values, X_cat_encoded))
         X_scaled = scaler.transform(X)
-        
+
         pred_encoded = model.predict(X_scaled)[0]
         probs = model.predict_proba(X_scaled)[0]
         risk = le.inverse_transform([pred_encoded])[0]
-        
+
         st.success(f"Predicted Degradation Risk: {risk}")
         class_map = {label: idx for idx, label in enumerate(le.classes_)}
         st.write(f"Probabilities - Safe: {probs[class_map['safe']]:.2f}, Medium: {probs[class_map['medium']]:.2f}, Critical: {probs[class_map['critical']]:.2f}")
-        
+
         if risk == 'critical':
             st.warning("Pit Alert: Degradation critical—initiate undercut to gain positions on fresh tires.")
         elif risk == 'medium':
