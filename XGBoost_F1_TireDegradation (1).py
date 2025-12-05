@@ -25,7 +25,7 @@ numerical_features = ['Throttle', 'Brake', 'Speed', 'Surface_Roughness',
 categorical_features = ['Tire_Compound', 'Driving_Style', 'Track']
 
 # F1-realistic options (adjust from your data uniques)
-tire_compounds = ['Soft', 'Medium', 'Hard']
+tire_compounds = ['C1', 'C2', 'C3', 'C4', 'C5']
 driving_styles = ['Aggressive', 'Balanced', 'Conservative']
 tracks = ['Monza', 'Monaco', 'Red Bull Ring', 'Silverstone', 'Spa-Francorchamps']
 
