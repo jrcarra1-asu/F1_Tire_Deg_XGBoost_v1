@@ -3,32 +3,19 @@
 
 # COMMAND ----------
 
-import os
+import streamlit as st
 import pandas as pd
 import numpy as np
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler, LabelEncoder, OneHotEncoder
-from sklearn.metrics import classification_report, roc_auc_score, confusion_matrix
-from sklearn.utils.class_weight import compute_sample_weight
-import xgboost as xgb
-import mlflow
-import mlflow.xgboost
-from mlflow.models.signature import infer_signature
-import matplotlib.pyplot as plt
-import seaborn as sns
-import joblib  # For exporting artifacts
+import joblib
 
-# MLflow setup (Databricks auto-configures; adjust URI if elsewhere)
-mlflow.set_experiment("/Users/jrcarra1@asu.edu/F1_Tire_Deg_DemoII")
-
-# Data path (Databricks-specific)
-DATA_PATH = "/Volumes/workspace/default/f1/simulated_dataset.csv"
-
-df = pd.read_csv(DATA_PATH, engine='pyarrow')
-
-df = df[df['Track'] != 'Nürburgring Nordschleife']
-print(f"Rows after filter: {len(df)}")
-print("Tracks:\n", df['Track'].value_counts(normalize=True))
+# Load models (assume in repo; adjust paths if in models/)
+@st.cache_resource
+def load_models():
+    model = joblib.load('xgb_model.pkl')  # Or 'models/xgb_model.pkl'
+    scaler = joblib.load('scaler.pkl')
+    encoder = joblib.load('encoder.pkl')
+    le = joblib.load('label_encoder.pkl')
+    return model, scaler, encoder, le
 
 numerical_features = ['Throttle', 'Brake', 'Speed', 'Surface_Roughness',
                       'Ambient_Temperature', 'Lateral_G_Force', 'Longitudinal_G_Force',
@@ -36,115 +23,71 @@ numerical_features = ['Throttle', 'Brake', 'Speed', 'Surface_Roughness',
                       'force_on_tire', 'front_surface_temp', 'rear_surface_temp',
                       'front_inner_temp', 'rear_inner_temp']
 categorical_features = ['Tire_Compound', 'Driving_Style', 'Track']
-target_reg = 'cumilative_Tire_Wear'  # Fixed typo
-target_class = 'degradation_risk'
 
-# Optional track multipliers (realism: Monza's high speeds accelerate wear)
-track_mult = {'Monza': 1.2, 'Monaco': 0.9, 'Red Bull Ring': 1.1}
-df[target_reg] *= df['Track'].map(track_mult).fillna(1.0)
-print(df[target_reg].describe())
+# F1-realistic options (adjust from your data uniques)
+tire_compounds = ['Soft', 'Medium', 'Hard']
+driving_styles = ['Aggressive', 'Balanced', 'Conservative']
+tracks = ['Monza', 'Monaco', 'Red Bull Ring', 'Silverstone', 'Spa-Francorchamps']
 
-# Class labels (qcut for balance; consider fixed bins for F1 realism, e.g., critical >60% wear triggers pit)
-if target_class not in df.columns:
-    df[target_class] = pd.qcut(df[target_reg], q=3, labels=['safe', 'medium', 'critical'], duplicates='drop')
-    print("Risk Dist:\n", df[target_class].value_counts(normalize=True))
+st.title("F1 Tire Degradation Alert App")
 
-df = df.dropna(subset=[target_class])
-print(f"Rows clean: {len(df)}")
+st.header("Input Telemetry Data")
+col1, col2 = st.columns(2)
 
-X_num = df[numerical_features]
-X_cat = df[categorical_features]
-y_class = df[target_class]
+with col1:
+    throttle = st.slider("Throttle (0-1)", 0.0, 1.0, 0.5)
+    brake = st.slider("Brake (0-1)", 0.0, 1.0, 0.5)
+    speed = st.number_input("Speed (km/h)", min_value=0.0, value=200.0)
+    surface_roughness = st.number_input("Surface Roughness", min_value=0.0, value=1.0)
+    ambient_temp = st.number_input("Ambient Temp (°C)", min_value=-10.0, max_value=50.0, value=25.0)
+    lateral_g = st.number_input("Lateral G-Force", min_value=0.0, value=1.5)
+    longitudinal_g = st.number_input("Longitudinal G-Force", min_value=0.0, value=1.5)
 
-encoder = OneHotEncoder(sparse_output=False, drop='first')
-X_cat_encoded = encoder.fit_transform(X_cat)
-X = np.hstack((X_num, X_cat_encoded))
+with col2:
+    friction_coeff = st.number_input("Friction Coeff", min_value=0.0, value=0.8)
+    tread_depth = st.number_input("Tread Depth (mm)", min_value=0.0, value=5.0)
+    force_on_tire = st.number_input("Force on Tire (N)", min_value=0.0, value=1000.0)
+    front_surface_temp = st.number_input("Front Surface Temp (°C)", min_value=0.0, value=80.0)
+    rear_surface_temp = st.number_input("Rear Surface Temp (°C)", min_value=0.0, value=80.0)
+    front_inner_temp = st.number_input("Front Inner Temp (°C)", min_value=0.0, value=90.0)
+    rear_inner_temp = st.number_input("Rear Inner Temp (°C)", min_value=0.0, value=90.0)
 
-le = LabelEncoder()
-y_class_encoded = le.fit_transform(y_class)
+tire_compound = st.selectbox("Tire Compound", tire_compounds)
+driving_style = st.selectbox("Driving Style", driving_styles)
+track = st.selectbox("Track", tracks)
 
-X_train, X_test, y_class_train, y_class_test = train_test_split(X, y_class_encoded, test_size=0.2, random_state=42)
+if st.button("Predict Risk"):
+    try:
+        model, scaler, encoder, le = load_models()
+        
+        input_data = {
+            **dict(zip(numerical_features, [throttle, brake, speed, surface_roughness, ambient_temp, lateral_g, longitudinal_g, friction_coeff, tread_depth, force_on_tire, front_surface_temp, rear_surface_temp, front_inner_temp, rear_inner_temp])),
+            'Tire_Compound': tire_compound,
+            'Driving_Style': driving_style,
+            'Track': track
+        }
+        input_df = pd.DataFrame([input_data])
+        
+        X_num = input_df[numerical_features]
+        X_cat = input_df[categorical_features]
+        X_cat_encoded = encoder.transform(X_cat)
+        X = np.hstack((X_num.values, X_cat_encoded))  # Use .values for array
+        X_scaled = scaler.transform(X)
+        
+        pred_encoded = model.predict(X_scaled)[0]
+        probs = model.predict_proba(X_scaled)[0]
+        risk = le.inverse_transform([pred_encoded])[0]
+        
+        st.success(f"Predicted Degradation Risk: {risk}")
+        class_map = {label: idx for idx, label in enumerate(le.classes_)}
+        st.write(f"Probabilities - Safe: {probs[class_map['safe']]:.2f}, Medium: {probs[class_map['medium']]:.2f}, Critical: {probs[class_map['critical']]:.2f}")
+        
+        if risk == 'critical':
+            st.warning("Pit Alert: Degradation critical—initiate undercut to gain positions on fresh tires.")
+        elif risk == 'medium':
+            st.info("Monitor: Consider overcut if rivals pit first; tires holding but watch inner temps.")
+    except Exception as e:
+        st.error(f"Prediction failed: {str(e)}. Check PKLs are in repo and compatible.")
 
-scaler = StandardScaler()
-X_train_scaled = scaler.fit_transform(X_train)
-X_test_scaled = scaler.transform(X_test)
-
-sample_weights = compute_sample_weight(class_weight='balanced', y=y_class_train)
-
-def generate_confusion_matrix(y_true, y_pred, class_labels, run_id=None):
-    cm = confusion_matrix(y_true, y_pred)
-    fig, ax = plt.subplots(figsize=(8, 6))
-    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=class_labels, yticklabels=class_labels)
-    plt.xlabel('Predicted')
-    plt.ylabel('True')
-    plt.title('Confusion Matrix')
-    if run_id:
-        mlflow.log_figure(fig, "confusion_matrix.png")
-    plt.close(fig)
-    return cm
-
-params = {
-    'objective': 'multi:softprob',
-    'num_class': 3,
-    'eval_metric': 'mlogloss',
-    'learning_rate': 0.1,
-    'max_depth': 6,
-    'min_child_weight': 1,
-    'subsample': 0.5,
-    'colsample_bytree': 0.5,
-    'seed': 42,
-    'n_jobs': -1,
-    'early_stopping_rounds': 10,
-    'tree_method': 'hist'  # gpu_hist if GPU
-}
-
-with mlflow.start_run(run_name="XGBoost_Classifier_POC") as xgb_run:
-    xgb_model = xgb.XGBClassifier(**params)
-    xgb_model.fit(X_train_scaled, y_class_train, sample_weight=sample_weights,
-                  eval_set=[(X_test_scaled, y_class_test)], verbose=False)
-    y_class_pred = xgb_model.predict(X_test_scaled)
-    y_class_probs = xgb_model.predict_proba(X_test_scaled)
-    class_report = classification_report(y_class_test, y_class_pred, output_dict=True, zero_division=0)
-    auc_roc = roc_auc_score(y_class_test, y_class_probs, multi_class='ovr', average='weighted')
-    metrics = {
-        'accuracy': class_report['accuracy'],
-        'precision_safe': class_report.get('0', {'precision': 0.0})['precision'],
-        'recall_safe': class_report.get('0', {'recall': 0.0})['recall'],
-        'precision_medium': class_report.get('1', {'precision': 0.0})['precision'],
-        'recall_medium': class_report.get('1', {'recall': 0.0})['recall'],
-        'precision_critical': class_report.get('2', {'precision': 0.0})['precision'],
-        'recall_critical': class_report.get('2', {'recall': 0.0})['recall'],
-        'f1_critical': class_report.get('2', {'f1-score': 0.0})['f1-score'],
-        'auc_roc_weighted': auc_roc
-    }
-    mlflow.log_metrics(metrics)
-    mlflow.log_params(params)
-
-    signature = infer_signature(X_train_scaled, y_class_pred)
-    mlflow.xgboost.log_model(xgb_model, "xgb_model", signature=signature)
-
-    unique_classes = np.unique(np.concatenate((y_class_test, y_class_pred)))
-    class_labels = le.inverse_transform(unique_classes)
-    generate_confusion_matrix(y_class_test, y_class_pred, class_labels, run_id=xgb_run.info.run_id)
-    print("Report:\n", classification_report(y_class_test, y_class_pred, zero_division=0))
-    print(f"AUC-ROC: {auc_roc:.4f}")
-
-    # Export for Streamlit
-    joblib.dump(xgb_model, 'xgb_model.pkl')
-    joblib.dump(scaler, 'scaler.pkl')
-    joblib.dump(encoder, 'encoder.pkl')
-    joblib.dump(le, 'label_encoder.pkl')
-
-# Log feature importances (key for explaining model in slides, rubric Communication 5 pts)
-with mlflow.start_run(run_id=xgb_run.info.run_id):
-    feature_names = numerical_features + list(encoder.get_feature_names_out(categorical_features))
-    importances = xgb_model.feature_importances_
-    sorted_idx = importances.argsort()[::-1]
-    importance_dict = {f'importance_{feature_names[i]}': importances[i] for i in sorted_idx[:5]}
-    mlflow.log_metrics(importance_dict)
-    fig, ax = plt.subplots(figsize=(10, 6))
-    ax.barh([feature_names[i] for i in sorted_idx[:10]], importances[sorted_idx[:10]])
-    plt.xlabel('Importance')
-    plt.title('Top Feature Importances')
-    mlflow.log_figure(fig, "feature_importance.png")
-    plt.close(fig)
+st.markdown("---")
+st.caption("Model trained on simulated F1 data. For demo only.")
