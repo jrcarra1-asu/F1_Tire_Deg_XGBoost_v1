@@ -25,8 +25,8 @@ numerical_features = ['Throttle', 'Brake', 'Speed', 'Surface_Roughness',
 categorical_features = ['Tire_Compound', 'Driving_Style', 'Track']
 
 tire_compounds = ['C1', 'C2', 'C3', 'C4', 'C5']  # Match training
-driving_styles = ['Aggressive', 'Balanced', 'Conservative']
-tracks = ['Monza', 'Monaco', 'Red Bull Ring', 'Silverstone', 'Spa-Francorchamps']
+driving_styles = ['Aggressive', 'Normal']
+tracks = ['Monza', 'Monaco', 'Red Bull Ring']
 
 st.title("F1 Tire Degradation Alert App")
 
