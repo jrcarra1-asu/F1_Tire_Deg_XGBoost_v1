@@ -51,7 +51,6 @@ with col2:
     front_inner_temp = st.number_input("Front Inner Temp (°C)", min_value=0.0, value=90.0)
     rear_inner_temp = st.number_input("Rear Inner Temp (°C)", min_value=0.0, value=90.0)
 
-lap_count = st.number_input("Lap Count", min_value=1, max_value=70, value=10)  # Fix validity
 tire_compound = st.selectbox("Tire Compound", tire_compounds)
 driving_style = st.selectbox("Driving Style", driving_styles)
 track = st.selectbox("Track", tracks)
@@ -63,7 +62,7 @@ if st.button("Predict Risk"):
     try:
         model, scaler, encoder, le = load_models()
 
-        num_vals = [throttle, brake, speed, surface_roughness, ambient_temp, lateral_g, longitudinal_g, friction_coeff, tread_depth, force_on_tire, front_surface_temp, rear_surface_temp, front_inner_temp, rear_inner_temp, lap_count]
+        num_vals = [throttle, brake, speed, surface_roughness, ambient_temp, lateral_g, longitudinal_g, friction_coeff, tread_depth, force_on_tire, front_surface_temp, rear_surface_temp, front_inner_temp, rear_inner_temp]
         input_data = dict(zip(numerical_features, num_vals))
         input_data.update({'Tire_Compound': tire_compound, 'Driving_Style': driving_style, 'Track': track})
         input_df = pd.DataFrame([input_data])
