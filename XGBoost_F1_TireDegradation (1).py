@@ -3,147 +3,95 @@
 
 # COMMAND ----------
 
-import os
+import streamlit as st
+import pandas as pd
 import numpy as np
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report, roc_auc_score
-from sklearn.utils.class_weight import compute_sample_weight
-import xgboost as xgb
-import mlflow
-import mlflow.xgboost
-from mlflow.models.signature import infer_signature
 import joblib
-from src.data_utils import load_data, get_features, get_target, numerical_features, categorical_features
-from src.utils import generate_confusion_matrix
-from sklearn.preprocessing import OneHotEncoder, LabelEncoder, StandardScaler
 
-# MLflow setup
-mlflow.set_experiment("F1_Tire_Deg_Experiment")  # Generic for portability
+@st.cache_resource
+def load_models():
+    model = joblib.load('xgb_model.pkl')
+    scaler = joblib.load('scaler.pkl')
+    encoder = joblib.load('encoder.pkl')
+    le = joblib.load('label_encoder.pkl')
+    return model, scaler, encoder, le
 
-df = load_data()
+numerical_features = ['Throttle', 'Brake', 'Speed', 'Surface_Roughness',
+                      'Ambient_Temperature', 'Lateral_G_Force', 'Longitudinal_G_Force',
+                      'Tire_Friction_Coefficient', 'Tire_Tread_Depth',
+                      'force_on_tire', 'front_surface_temp', 'rear_surface_temp',
+                      'front_inner_temp', 'rear_inner_temp', 'lap_count']  # Add for validity
 
-# Add lap_count if missing (simulate stint: races ~58-70 laps, deg ramps)
-if 'lap_count' not in df.columns:
-    df['lap_count'] = np.random.randint(1, 71, len(df))  # Uniform sim; real = sequential per session
-    mlflow.log_param("lap_count_simulated", True)  # Log for reproducibility
+categorical_features = ['Tire_Compound', 'Driving_Style', 'Track']
 
-# Split on indices
-train_idx, test_idx = train_test_split(df.index, test_size=0.2, random_state=42, stratify=df['Track'])  # Stratify by track for generalization
-train_df = df.loc[train_idx]
-test_df = df.loc[test_idx]
+tire_compounds = ['C1', 'C2', 'C3', 'C4', 'C5']  # Match training
+driving_styles = ['Aggressive', 'Balanced', 'Conservative']
+tracks = ['Monza', 'Monaco', 'Red Bull Ring', 'Silverstone', 'Spa-Francorchamps']
 
-# Preprocess
-X_train_num, X_train_cat = get_features(train_df)
-X_test_num, X_test_cat = get_features(test_df)
-y_train = get_target(train_df)
-y_test = get_target(test_df)
+st.title("F1 Tire Degradation Alert App")
 
-encoder = OneHotEncoder(sparse_output=False, drop='first')
-X_train_cat_encoded = encoder.fit_transform(X_train_cat)
-X_test_cat_encoded = encoder.transform(X_test_cat)
+st.header("Input Telemetry Data")
+col1, col2 = st.columns(2)
 
-X_train = np.hstack((X_train_num, X_train_cat_encoded))
-X_test = np.hstack((X_test_num, X_test_cat_encoded))
+with col1:
+    throttle = st.slider("Throttle (0-1)", 0.0, 1.0, 0.5)
+    brake = st.slider("Brake (0-1)", 0.0, 1.0, 0.5)
+    speed = st.number_input("Speed (km/h)", min_value=0.0, value=200.0)
+    surface_roughness = st.number_input("Surface Roughness", min_value=0.0, value=1.0)
+    ambient_temp = st.number_input("Ambient Temp (°C)", min_value=-10.0, max_value=50.0, value=25.0)
+    lateral_g = st.number_input("Lateral G-Force", min_value=0.0, value=1.5)
+    longitudinal_g = st.number_input("Longitudinal G-Force", min_value=0.0, value=1.5)
 
-le = LabelEncoder()
-y_train_encoded = le.fit_transform(y_train)
-y_test_encoded = le.transform(y_test)
+with col2:
+    friction_coeff = st.number_input("Friction Coeff", min_value=0.0, value=0.8)
+    tread_depth = st.number_input("Tread Depth (mm)", min_value=0.0, value=5.0)
+    force_on_tire = st.number_input("Force on Tire (N)", min_value=0.0, value=1000.0)
+    front_surface_temp = st.number_input("Front Surface Temp (°C)", min_value=0.0, value=80.0)
+    rear_surface_temp = st.number_input("Rear Surface Temp (°C)", min_value=0.0, value=80.0)
+    front_inner_temp = st.number_input("Front Inner Temp (°C)", min_value=0.0, value=90.0)
+    rear_inner_temp = st.number_input("Rear Inner Temp (°C)", min_value=0.0, value=90.0)
 
-scaler = StandardScaler()
-X_train_scaled = scaler.fit_transform(X_train)
-X_test_scaled = scaler.transform(X_test)
+lap_count = st.number_input("Lap Count", min_value=1, max_value=70, value=10)  # Fix validity
+tire_compound = st.selectbox("Tire Compound", tire_compounds)
+driving_style = st.selectbox("Driving Style", driving_styles)
+track = st.selectbox("Track", tracks)
 
-sample_weights = compute_sample_weight(class_weight='balanced', y=y_train_encoded)
+if tread_depth < 1.6:
+    st.error("Illegal tread per FIA—min 1.6mm.")
 
-params = {
-    'objective': 'multi:softprob',
-    'num_class': 3,
-    'eval_metric': 'mlogloss',
-    'learning_rate': 0.1,
-    'max_depth': 6,
-    'min_child_weight': 1,
-    'subsample': 0.5,
-    'colsample_bytree': 0.5,
-    'seed': 42,
-    'n_jobs': -1,
-    'early_stopping_rounds': 10,
-    'tree_method': 'hist'
-}
+if st.button("Predict Risk"):
+    try:
+        model, scaler, encoder, le = load_models()
 
-with mlflow.start_run(run_name="XGBoost_Classifier_With_Laps") as run:
-    xgb_model = xgb.XGBClassifier(**params)
-    xgb_model.fit(X_train_scaled, y_train_encoded, sample_weight=sample_weights,
-                  eval_set=[(X_test_scaled, y_test_encoded)], verbose=False)
-    
-    y_pred_encoded = xgb_model.predict(X_test_scaled)
-    y_probs = xgb_model.predict_proba(X_test_scaled)
-    
-    class_report = classification_report(y_test_encoded, y_pred_encoded, target_names=le.classes_, output_dict=True, zero_division=0)
-    auc_roc = roc_auc_score(y_test_encoded, y_probs, multi_class='ovr', average='weighted')
-    
-    metrics = {
-        'accuracy': class_report['accuracy'],
-        'precision_safe': class_report['safe']['precision'],
-        'recall_safe': class_report['safe']['recall'],
-        'precision_medium': class_report['medium']['precision'],
-        'recall_medium': class_report['medium']['recall'],
-        'precision_critical': class_report['critical']['precision'],
-        'recall_critical': class_report['critical']['recall'],
-        'f1_critical': class_report['critical']['f1-score'],
-        'auc_roc_weighted': auc_roc
-    }
-    mlflow.log_metrics(metrics)
-    mlflow.log_params(params)
-    
-    signature = infer_signature(X_train_scaled, y_pred_encoded)
-    mlflow.xgboost.log_model(xgb_model, "xgb_model", signature=signature)
-    
-    unique_classes = np.unique(np.concatenate((y_test_encoded, y_pred_encoded)))
-    class_labels = le.inverse_transform(unique_classes)
-    generate_confusion_matrix(y_test_encoded, y_pred_encoded, class_labels, run_id=run.info.run_id)
-    print("Report:\n", classification_report(y_test_encoded, y_pred_encoded, target_names=le.classes_, zero_division=0))
-    print(f"AUC-ROC: {auc_roc:.4f}")
-    
-    # Feature importances
-    feature_names = numerical_features + list(encoder.get_feature_names_out(categorical_features))
-    importances = xgb_model.feature_importances_
-    sorted_idx = importances.argsort()[::-1]
-    importance_dict = {f'importance_{feature_names[i]}': importances[i] for i in sorted_idx[:5]}
-    mlflow.log_metrics(importance_dict)
-    fig, ax = plt.subplots(figsize=(10, 6))
-    ax.barh([feature_names[i] for i in sorted_idx[:10]], importances[sorted_idx[:10]])
-    plt.xlabel('Importance')
-    plt.title('Top Feature Importances')
-    mlflow.log_figure(fig, "feature_importance.png")
-    plt.close(fig)
-    
-    # Cross-track generalization (with lap buckets for stint analysis)
-    test_df['true'] = le.inverse_transform(y_test_encoded)
-    test_df['predicted'] = le.inverse_transform(y_pred_encoded)
-    test_df['true_encoded'] = y_test_encoded
-    test_df['probs'] = [prob for prob in y_probs]
-    
-    lap_buckets = pd.cut(test_df['lap_count'], bins=[0,10,20,np.inf], labels=['early', 'mid', 'late'])
-    for track in test_df['Track'].unique():
-        df_track = test_df[test_df['Track'] == track]
-        if len(df_track) > 0:
-            report_track = classification_report(df_track['true'], df_track['predicted'], output_dict=True, zero_division=0)
-            probs_track = np.vstack(df_track['probs'])
-            auc_track = roc_auc_score(df_track['true_encoded'], probs_track, multi_class='ovr', average='weighted')
-            
-            mlflow.log_metric(f'recall_critical_{track}', report_track['critical']['recall'])
-            mlflow.log_metric(f'f1_critical_{track}', report_track['critical']['f1-score'])
-            mlflow.log_metric(f'auc_roc_{track}', auc_track)
-            print(f"Track {track} - Recall Critical: {report_track['critical']['recall']:.4f}, F1 Critical: {report_track['critical']['f1-score']:.4f}, AUC: {auc_track:.4f}")
-    
-    for bucket in lap_buckets.unique():
-        df_bucket = test_df[lap_buckets == bucket]
-        if len(df_bucket) > 0:
-            report_bucket = classification_report(df_bucket['true'], df_bucket['predicted'], output_dict=True, zero_division=0)
-            mlflow.log_metric(f'f1_critical_{bucket}_stint', report_bucket['critical']['f1-score'])
+        num_vals = [throttle, brake, speed, surface_roughness, ambient_temp, lateral_g, longitudinal_g, friction_coeff, tread_depth, force_on_tire, front_surface_temp, rear_surface_temp, front_inner_temp, rear_inner_temp, lap_count]
+        input_data = dict(zip(numerical_features, num_vals))
+        input_data.update({'Tire_Compound': tire_compound, 'Driving_Style': driving_style, 'Track': track})
+        input_df = pd.DataFrame([input_data])
 
-    # Export
-    joblib.dump(xgb_model, 'models/xgb_model.pkl')
-    joblib.dump(scaler, 'models/scaler.pkl')
-    joblib.dump(encoder, 'models/encoder.pkl')
-    joblib.dump(le, 'models/label_encoder.pkl')
+        X_num = input_df[numerical_features]
+        X_cat = input_df[categorical_features]
+        try:
+            X_cat_encoded = encoder.transform(X_cat)
+        except ValueError as e:
+            st.error(f"Category error: {e}. Trained categories: {encoder.categories_}")
+            st.stop()
+        X = np.hstack((X_num.values, X_cat_encoded))
+        X_scaled = scaler.transform(X)
+
+        pred_encoded = model.predict(X_scaled)[0]
+        probs = model.predict_proba(X_scaled)[0]
+        risk = le.inverse_transform([pred_encoded])[0]
+
+        st.success(f"Predicted Degradation Risk: {risk}")
+        class_map = {label: idx for idx, label in enumerate(le.classes_)}
+        st.write(f"Probabilities - Safe: {probs[class_map['safe']]:.2f}, Medium: {probs[class_map['medium']]:.2f}, Critical: {probs[class_map['critical']]:.2f}")
+
+        if risk == 'critical':
+            st.warning("Pit Alert: Degradation critical—initiate undercut to gain positions on fresh tires.")
+        elif risk == 'medium':
+            st.info("Monitor: Consider overcut if rivals pit first; tires holding but watch inner temps.")
+    except Exception as e:
+        st.error(f"Prediction failed: {str(e)}. Check PKLs are in repo and compatible.")
+
+st.markdown("---")
+st.caption("Model trained on simulated F1 data. For demo only.")
